@@ -188,6 +188,7 @@ class KeyCode(Enum):
     MENU = auto()
     CLEAR = auto()
     LOCK = auto()
+    TOUCHPAD_OFF = auto()
 
     # Mouse Buttons
     MOUSE_LEFT = auto()
@@ -720,6 +721,7 @@ class EvdevBackend(InputBackend):
             self.evdev.ecodes.KEY_MENU: KeyCode.MENU,
             self.evdev.ecodes.KEY_CLEAR: KeyCode.CLEAR,
             self.evdev.ecodes.KEY_SCREENLOCK: KeyCode.LOCK,
+            self.evdev.ecodes.KEY_TOUCHPAD_OFF: KeyCode.TOUCHPAD_OFF,
 
             # Mouse Buttons
             self.evdev.ecodes.BTN_LEFT: KeyCode.MOUSE_LEFT,
@@ -947,6 +949,9 @@ class PynputBackend(InputBackend):
             self.keyboard.Key.media_play_pause: KeyCode.MEDIA_PLAY_PAUSE,
             self.keyboard.Key.media_next: KeyCode.MEDIA_NEXT,
             self.keyboard.Key.media_previous: KeyCode.MEDIA_PREVIOUS,
+
+            # Touchpad toggle key (vk 269025201)
+            self.keyboard.KeyCode.from_vk(269025201): KeyCode.TOUCHPAD_OFF,
 
             # Mouse buttons
             self.mouse.Button.left: KeyCode.MOUSE_LEFT,

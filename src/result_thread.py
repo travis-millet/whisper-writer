@@ -42,6 +42,7 @@ class ResultThread(QThread):
         self.local_model = local_model
         self.is_recording = False
         self.is_running = True
+        self._transcribe_on_stop = False
         self.sample_rate = None
         self.mutex = QMutex()
 
@@ -51,13 +52,21 @@ class ResultThread(QThread):
         self.is_recording = False
         self.mutex.unlock()
 
-    def stop(self):
+    def stop_and_transcribe(self):
+        """Stop recording but still transcribe whatever audio was captured."""
+        self.mutex.lock()
+        self.is_running = False
+        self._transcribe_on_stop = True
+        self.mutex.unlock()
+
+    def stop(self, wait=True):
         """Stop the entire thread execution."""
         self.mutex.lock()
         self.is_running = False
         self.mutex.unlock()
-        self.statusSignal.emit('idle')
-        self.wait()
+        if wait:
+            self.statusSignal.emit('idle')
+            self.wait()
 
     def run(self):
         """Main execution method for the thread."""
@@ -73,8 +82,9 @@ class ResultThread(QThread):
             ConfigManager.console_print('Recording...')
             audio_data = self._record_audio()
 
-            if not self.is_running:
+            if not self.is_running and not self._transcribe_on_stop:
                 return
+            self._transcribe_on_stop = False
 
             if audio_data is None:
                 self.statusSignal.emit('idle')
@@ -90,9 +100,6 @@ class ResultThread(QThread):
 
             transcription_time = end_time - start_time
             ConfigManager.console_print(f'Transcription completed in {transcription_time:.2f} seconds. Post-processed line: {result}')
-
-            if not self.is_running:
-                return
 
             self.statusSignal.emit('idle')
             self.resultSignal.emit(result)
@@ -123,7 +130,7 @@ class ResultThread(QThread):
         # Create VAD only for recording modes that use it
         recording_mode = recording_options.get('recording_mode') or 'continuous'
         vad = None
-        if recording_mode in ('voice_activity_detection', 'continuous'):
+        if recording_mode in ('voice_activity_detection', 'continuous', 'hold_and_chunk'):
             vad = webrtcvad.Vad(2)  # VAD aggressiveness: 0 to 3, 3 being the most aggressive
             speech_detected = False
             silent_frame_count = 0

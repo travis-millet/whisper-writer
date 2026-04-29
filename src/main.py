@@ -1,7 +1,10 @@
 import os
 import sys
 import time
-from audioplayer import AudioPlayer
+try:
+    from audioplayer import AudioPlayer
+except ImportError:
+    AudioPlayer = None
 from pynput.keyboard import Controller
 from PyQt5.QtCore import QObject, QProcess
 from PyQt5.QtGui import QIcon
@@ -53,6 +56,8 @@ class WhisperWriterApp(QObject):
         self.local_model = create_local_model() if not model_options.get('use_api') else None
 
         self.result_thread = None
+        self._hold_active = False
+        self._pending_restart = False
 
         self.main_window = MainWindow()
         self.main_window.openSettings.connect(self.settings_window.show)
@@ -63,7 +68,7 @@ class WhisperWriterApp(QObject):
             self.status_window = StatusWindow()
 
         self.create_tray_icon()
-        self.main_window.show()
+        # self.main_window.show()  # suppress on startup when running as service
 
     def create_tray_icon(self):
         """
@@ -123,11 +128,14 @@ class WhisperWriterApp(QObject):
         """
         Called when the activation key combination is pressed.
         """
+        mode = ConfigManager.get_config_value('recording_options', 'recording_mode')
+        if mode == 'hold_and_chunk':
+            self._hold_active = True
+
         if self.result_thread and self.result_thread.isRunning():
-            recording_mode = ConfigManager.get_config_value('recording_options', 'recording_mode')
-            if recording_mode == 'press_to_toggle':
+            if mode == 'press_to_toggle':
                 self.result_thread.stop_recording()
-            elif recording_mode == 'continuous':
+            elif mode == 'continuous':
                 self.stop_result_thread()
             return
 
@@ -137,22 +145,30 @@ class WhisperWriterApp(QObject):
         """
         Called when the activation key combination is released.
         """
-        if ConfigManager.get_config_value('recording_options', 'recording_mode') == 'hold_to_record':
+        mode = ConfigManager.get_config_value('recording_options', 'recording_mode')
+        if mode == 'hold_to_record':
             if self.result_thread and self.result_thread.isRunning():
                 self.result_thread.stop_recording()
+        elif mode == 'hold_and_chunk':
+            self._hold_active = False
+            if self.result_thread and self.result_thread.isRunning():
+                self.result_thread.stop_and_transcribe()
 
     def start_result_thread(self):
         """
         Start the result thread to record audio and transcribe it.
         """
         if self.result_thread and self.result_thread.isRunning():
+            self._pending_restart = True
             return
 
+        self._pending_restart = False
         self.result_thread = ResultThread(self.local_model)
         if not ConfigManager.get_config_value('misc', 'hide_status_window'):
             self.result_thread.statusSignal.connect(self.status_window.updateStatus)
             self.status_window.closeSignal.connect(self.stop_result_thread)
         self.result_thread.resultSignal.connect(self.on_transcription_complete)
+        self.result_thread.finished.connect(self._on_thread_finished)
         self.result_thread.start()
 
     def stop_result_thread(self):
@@ -162,17 +178,29 @@ class WhisperWriterApp(QObject):
         if self.result_thread and self.result_thread.isRunning():
             self.result_thread.stop()
 
+    def _on_thread_finished(self):
+        """Called when the result thread fully exits — start next if pending."""
+        if self._pending_restart and self._hold_active:
+            self.start_result_thread()
+
     def on_transcription_complete(self, result):
         """
         When the transcription is complete, type the result and start listening for the activation key again.
         """
-        self.input_simulator.typewrite(result)
+        if result.strip():
+            self.input_simulator.typewrite(result)
 
-        if ConfigManager.get_config_value('misc', 'noise_on_completion'):
+        if ConfigManager.get_config_value('misc', 'noise_on_completion') and AudioPlayer:
             AudioPlayer(os.path.join('assets', 'beep.wav')).play(block=True)
 
-        if ConfigManager.get_config_value('recording_options', 'recording_mode') == 'continuous':
+        mode = ConfigManager.get_config_value('recording_options', 'recording_mode')
+        if mode == 'continuous':
             self.start_result_thread()
+        elif mode == 'hold_and_chunk':
+            if self._hold_active:
+                self.start_result_thread()
+            else:
+                self.key_listener.start()
         else:
             self.key_listener.start()
 

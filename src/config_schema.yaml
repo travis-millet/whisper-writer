@@ -107,6 +107,7 @@ recording_options:
       - voice_activity_detection
       - press_to_toggle
       - hold_to_record
+      - hold_and_chunk
   sound_device:
     value: null
     type: str
